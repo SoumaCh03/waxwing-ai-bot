@@ -1,0 +1,74 @@
+"""Flask application factory for the Telegram webhook."""
+
+from __future__ import annotations
+
+import logging
+
+from flask import Flask, jsonify, request
+
+from src.bot.telegram import TelegramClient
+from src.config.settings import Settings, get_settings
+from src.handlers.message_router import MessageRouter
+from src.services.gemini_service import GeminiService
+from src.services.places_service import PlacesService
+from src.services.user_store import build_user_store
+from src.services.weather_service import WeatherService
+from src.utils.logging import configure_logging
+
+LOGGER = logging.getLogger(__name__)
+
+
+def create_app(settings: Settings | None = None) -> Flask:
+    settings = settings or get_settings()
+    configure_logging(settings.log_level)
+
+    app = Flask(__name__)
+    app.config["PORT"] = settings.port
+
+    telegram = TelegramClient(
+        settings.telegram_bot_token,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    router = MessageRouter(
+        telegram=telegram,
+        gemini=GeminiService(settings.gemini_api_key, settings.gemini_model),
+        weather=WeatherService(
+            settings.openweather_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+        ),
+        places=PlacesService(
+            settings.google_maps_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+        ),
+        user_store=build_user_store(
+            settings.firestore_collection,
+            enable_firestore=settings.enable_firestore,
+        ),
+    )
+
+    @app.get("/")
+    def health_check():
+        return jsonify({"service": "waxwing-ai-bot", "status": "ok"})
+
+    @app.post("/")
+    def telegram_webhook():
+        if settings.telegram_webhook_secret:
+            received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+            if received_secret != settings.telegram_webhook_secret:
+                LOGGER.warning("Rejected webhook request with invalid secret header.")
+                return jsonify({"error": "unauthorized"}), 401
+
+        update = request.get_json(silent=True)
+        if not isinstance(update, dict):
+            LOGGER.warning("Rejected webhook request with invalid JSON payload.")
+            return jsonify({"error": "invalid payload"}), 400
+
+        try:
+            router.handle_update(update)
+        except Exception:
+            LOGGER.exception("Unhandled webhook processing error.")
+
+        return "ok", 200
+
+    return app
+
