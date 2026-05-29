@@ -50,14 +50,19 @@ def run_polling(settings: Settings | None = None) -> None:
         ),
     )
 
-    print("Running in POLLING mode")
+    LOGGER.info("Running in POLLING mode")
 
     offset: int | None = None
     long_poll_timeout = 20
 
     while True:
         try:
-            updates: list[dict[str, Any]] = telegram.get_updates(offset=offset, timeout_seconds=long_poll_timeout)
+            updates = telegram.get_updates(offset=offset, timeout_seconds=long_poll_timeout)
+            if updates is None:
+                LOGGER.warning("Error fetching updates. Sleeping 5s to avoid tight polling loop.")
+                time.sleep(5)
+                continue
+
             if not updates:
                 # No updates returned; loop again (getUpdates will block server-side up to long_poll_timeout)
                 continue

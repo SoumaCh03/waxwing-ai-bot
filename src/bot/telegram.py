@@ -21,10 +21,13 @@ class TelegramClient:
         chat_id: int | str,
         text: str,
         reply_markup: dict[str, Any] | None = None,
+        parse_mode: str | None = None,
     ) -> bool:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
 
         try:
             response = self._session.post(
@@ -38,10 +41,10 @@ class TelegramClient:
             LOGGER.exception("Telegram sendMessage failed for chat_id=%s: %s", chat_id, exc)
             return False
 
-    def get_updates(self, offset: int | None = None, timeout_seconds: int = 20) -> list[dict[str, Any]]:
+    def get_updates(self, offset: int | None = None, timeout_seconds: int = 20) -> list[dict[str, Any]] | None:
         """Fetch updates from Telegram using getUpdates (supports offset and long polling).
 
-        Returns a list of update dicts or an empty list on error.
+        Returns a list of update dicts, an empty list if no updates, or None on error.
         """
         params: dict[str, Any] = {"timeout": timeout_seconds}
         if offset is not None:
@@ -59,8 +62,8 @@ class TelegramClient:
             data = response.json()
             if not isinstance(data, dict):
                 LOGGER.warning("Unexpected getUpdates response: %s", data)
-                return []
+                return None
             return data.get("result", []) or []
         except requests.RequestException as exc:
             LOGGER.exception("Telegram getUpdates failed: %s", exc)
-            return []
+            return None

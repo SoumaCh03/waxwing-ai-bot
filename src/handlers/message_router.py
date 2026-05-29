@@ -106,7 +106,7 @@ class MessageRouter:
             self._send_location_request(chat_id)
             return
 
-        self._telegram.send_message(chat_id, self._gemini.get_ai_response(text))
+        self._telegram.send_message(chat_id, self._gemini.get_ai_response(text), parse_mode="Markdown")
 
     def handle_location(self, chat_id: int | str, latitude: float, longitude: float) -> None:
         pending_tools = self._user_store.get(chat_id, "pending_tools")

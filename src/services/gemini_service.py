@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
+import json
+from pydantic import BaseModel
 
 from google import genai
+from google.genai import types
 
 LOGGER = logging.getLogger(__name__)
 
 VALID_INTENTS = {"WEATHER", "MECHANIC", "FUEL", "EMERGENCY", "GENERAL_CHAT"}
+
+
+class IntentResponse(BaseModel):
+    intents: list[str]
 
 
 class GeminiService:
@@ -18,45 +25,46 @@ class GeminiService:
 
     def detect_intents(self, user_message: str) -> list[str]:
         prompt = f"""
-Analyze the user message and return ALL relevant intents as comma-separated
-labels from this list:
-
-WEATHER
-MECHANIC
-FUEL
-EMERGENCY
-GENERAL_CHAT
-
-Examples:
-bike stalled in rain = EMERGENCY,WEATHER,MECHANIC
-need fuel = FUEL
-hello = GENERAL_CHAT
-
-Return only labels separated by commas.
+Analyze the user message and identify all relevant intents from the following list:
+- WEATHER
+- MECHANIC
+- FUEL
+- EMERGENCY
+- GENERAL_CHAT
 
 User message:
 {user_message}
 """
-
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=IntentResponse,
+                ),
             )
+            if response.text:
+                data = json.loads(response.text)
+                raw_intents = data.get("intents", [])
+                filtered = [
+                    intent.strip().upper()
+                    for intent in raw_intents
+                    if intent.strip().upper() in VALID_INTENTS
+                ]
+                return filtered or ["GENERAL_CHAT"]
         except Exception as exc:
             LOGGER.exception("Gemini intent detection failed: %s", exc)
-            return ["GENERAL_CHAT"]
 
-        raw_text = (response.text or "").strip().upper()
-        intents = [intent.strip() for intent in raw_text.split(",") if intent.strip()]
-        filtered = [intent for intent in intents if intent in VALID_INTENTS]
-        return filtered or ["GENERAL_CHAT"]
+        return ["GENERAL_CHAT"]
 
     def get_ai_response(self, user_message: str) -> str:
         prompt = f"""
 You are WaxWing, a highly intelligent motorcycle roadside assistant.
 Speak like a warm, fluent human assistant.
 Be practical, conversational, emotionally reassuring, and concise.
+Use standard Telegram markdown for formatting (e.g. *bold* for emphasis, `code` for names/numbers).
+Do not use nested markdown or HTML.
 
 User message:
 {user_message}

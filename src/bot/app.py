@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hmac
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, request
 
@@ -46,6 +48,14 @@ def create_app(settings: Settings | None = None) -> Flask:
         ),
     )
 
+    executor = ThreadPoolExecutor(max_workers=4)
+
+    def process_async(upd: dict) -> None:
+        try:
+            router.handle_update(upd)
+        except Exception:
+            LOGGER.exception("Unhandled async webhook processing error.")
+
     @app.get("/")
     def health_check():
         return jsonify({"service": "waxwing-ai-bot", "status": "ok"})
@@ -54,7 +64,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     def telegram_webhook():
         if settings.telegram_webhook_secret:
             received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-            if received_secret != settings.telegram_webhook_secret:
+            if not received_secret or not hmac.compare_digest(received_secret, settings.telegram_webhook_secret):
                 LOGGER.warning("Rejected webhook request with invalid secret header.")
                 return jsonify({"error": "unauthorized"}), 401
 
@@ -63,10 +73,8 @@ def create_app(settings: Settings | None = None) -> Flask:
             LOGGER.warning("Rejected webhook request with invalid JSON payload.")
             return jsonify({"error": "invalid payload"}), 400
 
-        try:
-            router.handle_update(update)
-        except Exception:
-            LOGGER.exception("Unhandled webhook processing error.")
+        # Offload update processing to the background thread pool
+        executor.submit(process_async, update)
 
         return "ok", 200
 
